@@ -33,9 +33,11 @@ class MockHermes:
         violations: Iterable[str] | None = None,
         *,
         fail_with: Exception | None = None,
+        never_images: bool = False,
     ) -> None:
         self.violations: deque[str] = deque(violations or ())
         self.fail_with = fail_with
+        self.never_images = never_images
         self.calls: list[HermesRequest] = []
 
     def generate(self, request: HermesRequest) -> HermesResponse:
@@ -48,11 +50,30 @@ class MockHermes:
         if violation:
             text = self._break(text, violation, request.constraints.max_length)
 
+        image_prompt, image_alt = self._image(request)
         return HermesResponse(
             text=text,
             lane_id=request.lane.id,
             material_id=request.material.id,
             reasoning=self._reasoning(request),
+            image_prompt=image_prompt,
+            image_alt=image_alt,
+        )
+
+    def _image(self, request: HermesRequest) -> tuple[str | None, str | None]:
+        """Ask for an image only where the lane allows one.
+
+        The real Hermes weighs whether a post is better with a picture. The
+        fake just says yes wherever it is permitted, which is what exercises
+        the path.
+        """
+        if not request.images_allowed or self.never_images:
+            return None, None
+        subject = " ".join(request.material.content.split()[:12])
+        return (
+            "A restrained editorial illustration for a software build update. "
+            "Flat shapes, muted palette, no text, no logos. Subject: {}".format(subject),
+            "An abstract illustration accompanying a build update about {}".format(subject),
         )
 
     # -- composition -------------------------------------------------------

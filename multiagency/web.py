@@ -9,16 +9,18 @@ from __future__ import annotations
 import logging
 import secrets
 import sqlite3
+from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from . import db, pipeline
 from .clock import iso, now_utc
 from .config import ContentConfig
+from .images import IMAGE_DIR
 from .settings import Settings
 from .templates import render_queue
 
@@ -158,6 +160,39 @@ def create_app(
             if not text.strip():
                 return _back(post_id, "post {} cannot be saved empty".format(post_id))
             pipeline.save_edit(conn, post_id, text)
+        return _back(post_id)
+
+    @app.get("/posts/{post_id}/image", dependencies=[guard])
+    def post_image(post_id: int) -> FileResponse:
+        """Serve the rendered image so a reviewer can see what they approve."""
+        with db.LOCK:
+            row = _require_post(post_id)
+            stored = row["image_path"]
+        if not stored:
+            raise HTTPException(status_code=404, detail="post {} has no image".format(post_id))
+
+        path = Path(stored)
+        # Only ever serve out of the image directory, whatever the row says.
+        try:
+            path.resolve().relative_to(IMAGE_DIR.resolve())
+        except ValueError:
+            log.error("post %s points outside the image directory: %s", post_id, path)
+            raise HTTPException(status_code=404, detail="image not available")
+        if not path.exists():
+            raise HTTPException(
+                status_code=404, detail="the image file for post {} is gone".format(post_id)
+            )
+        return FileResponse(path, media_type="image/png")
+
+    @app.post("/posts/{post_id}/drop-image", dependencies=[guard])
+    def drop_image(post_id: int) -> RedirectResponse:
+        """Keep the post, drop the picture. The file is left on disk."""
+        with db.LOCK:
+            row = _require_post(post_id)
+            if row["status"] == "posted":
+                return _back(post_id, "post {} is already published".format(post_id))
+            db.drop_image(conn, post_id)
+            db.log_event(conn, "image_dropped", "by the reviewer", post_id=post_id)
         return _back(post_id)
 
     @app.post("/posts/{post_id}/reject", dependencies=[guard])

@@ -55,3 +55,4 @@ venv/
 Thumbs.db
 .idea/
 .vscode/
+data/images/

@@ -23,8 +23,9 @@ from contextlib import asynccontextmanager
 
 from . import db, pipeline
 from .config import load_config
-from .errors import ConfigError, HermesError, PublishError
+from .errors import ConfigError, HermesError, ImageError, PublishError
 from .hermes import get_hermes
+from .images import get_renderer
 from .publisher import get_publisher
 from .settings import Settings, load_settings
 
@@ -94,7 +95,8 @@ def cmd_pull(settings: Settings) -> int:
 def cmd_generate(settings: Settings) -> int:
     cfg, conn = bootstrap(settings)
     hermes = get_hermes(settings)
-    for outcome in pipeline.run_generation(conn, cfg, hermes):
+    renderer = get_renderer(settings, cfg) if cfg.images.enabled else None
+    for outcome in pipeline.run_generation(conn, cfg, hermes, renderer=renderer):
         print(" ", outcome)
     return 0
 
@@ -198,7 +200,8 @@ def cmd_serve(settings: Settings, host: str, port: int) -> int:
     cfg, conn = bootstrap(settings)
     hermes = get_hermes(settings)
     publisher = get_publisher(settings)
-    scheduler = build_scheduler(conn, cfg, hermes, publisher)
+    renderer = get_renderer(settings, cfg) if cfg.images.enabled else None
+    scheduler = build_scheduler(conn, cfg, hermes, publisher, renderer)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -206,7 +209,7 @@ def cmd_serve(settings: Settings, host: str, port: int) -> int:
         # while waiting for the first interval to come round.
         with db.LOCK:
             pipeline.run_pull(conn, cfg)
-            pipeline.run_generation(conn, cfg, hermes)
+            pipeline.run_generation(conn, cfg, hermes, renderer=renderer)
             pipeline.sweep_missed_slots(conn, cfg)
         scheduler.start()
         log.info("approval queue on http://%s:%d", host, port)
@@ -288,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nThe content config is not usable, so nothing started.\n", file=sys.stderr)
         print(exc, file=sys.stderr)
         return 2
-    except (HermesError, PublishError) as exc:
+    except (HermesError, PublishError, ImageError) as exc:
         print("\n{}: {}".format(type(exc).__name__, exc), file=sys.stderr)
         return 3
 

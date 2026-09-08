@@ -77,6 +77,18 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   font-size: .88rem;
 }
 .text { white-space: pre-wrap; }
+.media { display: flex; flex-direction: column; gap: .4rem; }
+.media img {
+  max-width: 22rem; width: 100%; border-radius: 6px;
+  border: 1px solid var(--line); display: block; background: #0e1015;
+}
+.media .alt {
+  font-size: .84rem; color: var(--muted);
+  border-left: 2px solid var(--line); padding-left: .7rem;
+}
+.media .prompt { font-size: .78rem; color: var(--muted); font-style: italic; }
+.media-actions { margin-top: .1rem; }
+.media-actions button { font-size: .82rem; padding: .3rem .7rem; }
 .actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .9rem; }
 button {
   font: inherit; border-radius: 6px; padding: .42rem .95rem; cursor: pointer;
@@ -139,6 +151,46 @@ def _material_block(row: sqlite3.Row) -> str:
     )
 
 
+def _image_block(row: sqlite3.Row, *, interactive: bool) -> str:
+    """The image, its alt text, and the prompt that produced it.
+
+    A reviewer approves what they can see, so the image is shown at a size
+    worth judging rather than as a thumbnail. When rendering failed the post
+    is still here, with the reason, because the text was never at risk.
+    """
+    keys = row.keys()
+    path = row["image_path"] if "image_path" in keys else None
+    error = row["image_error"] if "image_error" in keys else None
+    alt = row["image_alt"] if "image_alt" in keys else None
+    prompt = row["image_prompt"] if "image_prompt" in keys else None
+
+    if error:
+        return (
+            '<div class="banner">The image could not be made: {}. The post is '
+            "unaffected and can go out as text.</div>".format(_e(error))
+        )
+    if not path:
+        return ""
+
+    drop = ""
+    if interactive:
+        drop = (
+            '<form method="post" action="/posts/{}/drop-image" class="media-actions">'
+            '<button type="submit">Post without the image</button></form>'.format(row["id"])
+        )
+    prompt_line = (
+        '<div class="prompt">Prompt: {}</div>'.format(_e(prompt)) if prompt else ""
+    )
+    return (
+        '<div class="block"><div class="label">Image</div><div class="media">'
+        '<img src="/posts/{pid}/image" alt="{alt}">'
+        '<div class="alt"><strong>Alt text:</strong> {alt}</div>'
+        "{prompt}{drop}</div></div>".format(
+            pid=row["id"], alt=_e(alt or "no alt text"), prompt=prompt_line, drop=drop
+        )
+    )
+
+
 def _reasoning_block(row: sqlite3.Row) -> str:
     return (
         '<div class="block"><div class="label">Why Hermes picked this</div>'
@@ -182,6 +234,7 @@ def _pending_card(row: sqlite3.Row, cfg: ContentConfig) -> str:
   {banner}
   {reasoning}
   {material}
+  {image}
   {edited_note}
   <form method="post" action="/posts/{pid}/approve" data-limit="{limit}">
     <div class="label">Post</div>
@@ -204,6 +257,7 @@ def _pending_card(row: sqlite3.Row, cfg: ContentConfig) -> str:
         banner=banner,
         reasoning=_reasoning_block(row),
         material=_material_block(row),
+        image=_image_block(row, interactive=True),
         edited_note=edited_note,
         limit=limit,
         text=_e(text),
@@ -225,6 +279,7 @@ def _approved_card(row: sqlite3.Row, cfg: ContentConfig) -> str:
   <div class="meta">{tags}<span>publishes {when}</span><span>#{pid}</span>
     <span class="tag">{n} chars</span>{edited}</div>
   <div class="text">{text}</div>
+  {image}
   <form method="post" action="/posts/{pid}/unapprove" class="actions">
     <button type="submit">Return to pending</button>
   </form>
@@ -233,6 +288,7 @@ def _approved_card(row: sqlite3.Row, cfg: ContentConfig) -> str:
         tags=_lane_tags(cfg, row["lane_id"]),
         when=_e(local_str(parse(row["scheduled_for"]), cfg.timezone)),
         pid=row["id"],
+        image=_image_block(row, interactive=False),
         n=len(text.strip()),
         edited='<span class="tag">edited</span>' if row["edited_text"] else "",
         text=_e(text),

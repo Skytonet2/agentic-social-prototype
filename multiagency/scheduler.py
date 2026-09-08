@@ -16,6 +16,7 @@ from . import db, pipeline
 from .clock import zone
 from .config import ContentConfig
 from .hermes import Hermes
+from .images import ImageRenderer
 from .publisher import Publisher
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ def build_scheduler(
     cfg: ContentConfig,
     hermes: Hermes,
     publisher: Publisher,
+    renderer: ImageRenderer | None = None,
 ) -> BackgroundScheduler:
     scheduler = BackgroundScheduler(timezone=zone(cfg.timezone))
 
@@ -55,7 +57,10 @@ def build_scheduler(
         coalesce=True,
     )
     scheduler.add_job(
-        _guarded("generate", lambda: pipeline.run_generation(conn, cfg, hermes)),
+        _guarded(
+            "generate",
+            lambda: pipeline.run_generation(conn, cfg, hermes, renderer=renderer),
+        ),
         IntervalTrigger(minutes=GENERATE_CHECK_MINUTES),
         id="generate",
         max_instances=1,

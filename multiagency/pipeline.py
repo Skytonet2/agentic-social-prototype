@@ -361,8 +361,13 @@ def _publish_one(
             )
 
     try:
+        # Alt text only travels with an image. A reviewer who dropped the
+        # picture leaves the alt text on the row as a record, and it must not
+        # follow the post out on its own.
         x_post_id = publisher.publish(
-            text, image_path=image_path, image_alt=row["image_alt"]
+            text,
+            image_path=image_path,
+            image_alt=row["image_alt"] if image_path is not None else None,
         )
     except PublishError as exc:
         # No silent retry. A human decides whether this goes out again.
