@@ -1,0 +1,7 @@
+pyyaml>=6.0
+apscheduler>=3.10,<4
+fastapi>=0.110
+uvicorn>=0.27
+python-multipart>=0.0.9
+requests>=2.31
+requests-oauthlib>=1.3

@@ -1,0 +1,57 @@
+# Secrets. Never commit any of these.
+.env
+.env.*
+# .env.example carries placeholder keys with no values and is meant to be read.
+!.env.example
+
+# Credential and token material, whatever it gets named.
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+credentials.json
+credentials.yaml
+credentials.yml
+client_secret*.json
+token.json
+token.yaml
+*token*.txt
+*secret*.json
+*secret*.yaml
+*secret*.yml
+.netrc
+.npmrc
+id_rsa
+id_ed25519
+*.ppk
+
+# State. The database is generated and can hold post text.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/state/
+
+# Run artifacts.
+data/*.log
+data/*.published.log
+
+# Python.
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Editors and OS.
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

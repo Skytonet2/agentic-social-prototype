@@ -1,0 +1,13 @@
+# Things that shipped. Past tense only. One entry per line.
+The approval queue now shows the reasoning behind each draft alongside the draft itself, so a reviewer can judge the pick before judging the writing.
+Source material is displayed next to every pending post. Review time dropped from about four minutes a post to under one.
+Posts that break a hard constraint twice are now queued and flagged rather than dropped. Nothing disappears between generation and review.
+The scheduler skips a slot when nothing is approved for it, and writes the skip to the event log with the slot it missed.
+Content lanes, sources, constraints and the posting schedule moved into a single config file that can be edited without a deploy.
+Publish failures now record the reason on the post instead of retrying quietly in the background.
+Material is deduplicated on a content fingerprint, so a source that republishes the same item under a new id no longer produces a second draft.
+Every draft now carries the id of the material it came from, which made tracing a bad post back to its input a one-click job.
+The generation step reads the last ten published posts, which cut near-duplicate drafts to roughly none over a two week run.
+Edited drafts publish the edit, not the original. The original is kept for comparison.
+Config problems now stop startup with the list of what is wrong and where, instead of failing on the first bad key.
+The event log records every skipped slot, failed source and failed publish, so a week can be audited after the fact.

@@ -1,0 +1,13 @@
+# Positions on how agentic work should be built and bought. One per line.
+Most agent projects fail at the boundary, not at the model. The prompt is usually fine. The thing feeding it is guessing.
+If a system can act without a human and you have not decided when it should stop, you have not designed it, you have released it.
+Buying an agent is buying an operating procedure. If the vendor cannot tell you what it does when it is unsure, there is no procedure.
+The useful question about an agent is not what it can do. It is what it does when the input is thin, because that is most days.
+Approval is not a phase one limitation you remove later. It is the thing that makes the output worth publishing at all.
+A team that cannot edit its own content rules without an engineer will stop editing them, and the output goes stale in about three weeks.
+Autonomy is cheap to demo and expensive to run. The cost is in everything you build so that it can be wrong safely.
+The measure of an agentic system is the approval rate, not the volume. High volume with heavy editing is worse than nothing.
+Reasoning that is not stored is reasoning that cannot be reviewed, and a system nobody can review is a system nobody will trust with anything that matters.
+Scope your agent to a decision, not to a job title. Decisions have inputs and a definition of done. Job titles do not.
+The right amount of infrastructure for a prototype is one process and one file. Everything else is a way of not finding out whether the idea works.
+If you cannot say which input produced an output, you cannot improve either one.

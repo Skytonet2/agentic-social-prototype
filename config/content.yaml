@@ -1,0 +1,115 @@
+# MultiAgency content system.
+# This file is the whole content system. Editing it does not require touching code.
+# It is validated on startup; a bad file stops the process with a message rather
+# than starting in a broken state.
+
+timezone: UTC
+
+# How often material is pulled from sources.
+pull_interval_minutes: 360
+
+# How far ahead of a slot a post is generated, so there is time to review it.
+generate_lead_hours: 36
+
+# Injected into every Hermes call, on top of the per-lane constraints.
+global_constraints:
+  max_length: 280
+  allow_emojis: false
+  forbid_em_dash: true
+  rules:
+    - "Do not use em-dashes."
+    - "Do not make claims about funding, grants, or bounties."
+    - "Do not name tokens, quote prices, or predict returns."
+    - "No manufactured urgency. No engagement bait. No 'this changes everything'."
+    - "Do not use emojis."
+    - "Write plainly. If the material does not support a point, do not make one."
+
+lanes:
+  - id: field_notes
+    audience: builders
+    post_type: observation
+    purpose: >
+      Share one concrete thing learned while building agents this week.
+      The reader should come away knowing something they did not know,
+      not knowing that MultiAgency exists.
+    example: >
+      Agents that retry silently are worse than agents that fail loudly.
+      We spent two days chasing a bug that turned out to be a retry
+      swallowing a 401. Now every failure writes a reason to the row.
+    constraints:
+      max_length: 270
+      allow_emojis: false
+      rules:
+        - "First person plural. We, not I."
+        - "One idea per post. No lists."
+        - "Name the specific thing. No 'a client', say what the system did."
+    active: true
+    sources:
+      - id: field_notes_log
+        source_type: file_lines
+        location: data/seed/engineering_notes.txt
+
+  - id: shipped
+    audience: projects
+    post_type: build_update
+    purpose: >
+      Report something that shipped or changed in a project we run.
+      Factual. What changed, and what it means for someone using it.
+    example: >
+      The approval queue now shows why Hermes picked a piece of material,
+      not just what it wrote. Review time dropped from four minutes a post
+      to under one.
+    constraints:
+      max_length: 250
+      allow_emojis: false
+      rules:
+        - "Past tense. It shipped or it is not a post."
+        - "No roadmap talk. No 'coming soon'."
+    active: true
+    sources:
+      - id: shipped_changelog
+        source_type: file_lines
+        location: data/seed/changelog.txt
+
+  - id: how_we_work
+    audience: clients
+    post_type: point_of_view
+    purpose: >
+      A short position on how agentic services should be built or bought.
+      Aimed at someone deciding whether to hire a team like ours.
+    example: >
+      Most agent projects fail at the boundary, not the model. The prompt
+      is fine. The thing feeding it is guessing. Fix the inputs first.
+    constraints:
+      max_length: 240
+      allow_emojis: false
+      rules:
+        - "No pitching. No call to action. No 'DM us'."
+        - "Take an actual position. If it is agreeable to everyone, it is not a post."
+    active: true
+    sources:
+      - id: how_we_work_notes
+        source_type: file_lines
+        location: data/seed/pov_notes.txt
+
+schedule:
+  - id: field_notes_tue
+    lane_id: field_notes
+    day_of_week: tue
+    time: "10:00"
+    active: true
+  - id: field_notes_thu
+    lane_id: field_notes
+    day_of_week: thu
+    time: "10:00"
+    active: true
+  - id: shipped_wed
+    lane_id: shipped
+    day_of_week: wed
+    time: "15:00"
+    active: true
+  - id: how_we_work_mon
+    lane_id: how_we_work
+    day_of_week: mon
+    time: "09:00"
+    active: true

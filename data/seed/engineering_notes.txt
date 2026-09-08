@@ -1,0 +1,16 @@
+# Field notes from building agents. One observation per line.
+# Lines starting with # are ignored. Append to the bottom, do not rewrite history.
+Agents that retry silently are worse than agents that fail loudly. We lost two days to a retry loop swallowing a 401, and the fix was making every failure write a reason to the row it belongs to.
+The bottleneck in agent work is almost never the model. It is the material going in. We spent a week tuning a prompt that was fine and one afternoon fixing the feed that was guessing.
+Dedupe on content, not on identifier. Half of what we pulled twice had a new id and the same words, and the agent happily wrote the same post about it a second time.
+Storing why a model picked something turned out to be worth more than storing what it wrote. A reviewer can judge a bad pick in two seconds and a bad sentence in twenty.
+Human approval queues rot when the reviewer has to reconstruct context. Put the source material next to the draft or nobody reads either.
+Every autonomous system we have run needed a way to skip rather than a way to improvise. Given a gap to fill, an agent will fill it, and what it fills it with is the problem.
+A scheduler that publishes at a fixed time is easy. A scheduler that does nothing when there is nothing approved is the part people forget to build.
+We stopped letting the generation layer post-process its own output. Every cleanup pass we added moved the failure somewhere harder to see.
+Rate limits are a design constraint, not an error case. Treating a 429 as a bug produced worse behaviour than treating it as a scheduling input.
+The last ten things published is the cheapest repetition guard we have found. Anything longer and the model starts writing around its own history instead of from the material.
+Config that the content person can edit without a deploy changed how often the content actually got tuned. It went from monthly to twice a week.
+Fingerprints beat timestamps for knowing what is new. Timestamps lie whenever a source rebuilds its feed.
+An agent with one job and a narrow contract is easier to debug than an agent with a plan. We keep taking planning back out.
+Validation that rewrites is validation that hides. Ours only reports, and the pipeline decides what to do about it.
