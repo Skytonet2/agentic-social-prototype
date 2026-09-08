@@ -124,6 +124,7 @@ Hermes returns:
 - `lane_id` — which lane it is for
 - `material_id` — which material it drew from
 - `reasoning` — one or two sentences on why this was worth posting
+- `image_prompt` and `image_alt` — optional, and only where the lane allows images
 
 A response missing any of those, or naming a different lane or material, is an
 error rather than something to paper over. `reasoning` is stored and shown at
@@ -159,6 +160,43 @@ but not within the contract, `2` nothing was configured to call.
 Run it until it exits `0`, then set `HERMES_MODE=live`. A constraint violation
 reported by the probe is not a connection problem: it means the wiring works
 and the lane needs tuning.
+
+## Images
+
+Off by default. Hermes decides whether a post warrants a picture and writes the
+prompt and the alt text; the image model only executes that prompt. No judgment
+lives outside Hermes, which is the same rule the text follows.
+
+Two switches, both in the content YAML, and both must be on:
+
+```yaml
+images:
+  enabled: true          # the master switch
+  model: gpt-image-1
+  size: "1024x1024"      # 1024x1024 | 1536x1024 | 1024x1536 | auto
+  quality: medium        # low | medium | high | auto
+
+lanes:
+  - id: shipped
+    allow_images: true   # this lane opts in; the others stay text
+```
+
+Set `IMAGE_RENDERER=openai` and `OPENAI_API_KEY` in `.env` to render for real.
+`IMAGE_RENDERER=mock` writes a placeholder PNG instead, so the whole path runs
+offline.
+
+Three things are worth knowing:
+
+- **Approval covers the image.** The queue shows it at a size worth judging,
+  with its alt text and the prompt that made it. A reviewer can drop the image
+  and publish the text alone.
+- **Alt text is required**, not optional. Hermes returning a prompt without one
+  is a contract error, because the post would publish inaccessible.
+- **A failed render never costs the post.** The text is already queued and the
+  reason is stored beside it, so the post reaches review as text.
+
+Images publish through X's v2 media endpoints: upload, set the alt text, then
+attach the media id to the post.
 
 ## The flow
 
@@ -228,6 +266,8 @@ Wire the real integrations last, and one at a time.
 - **Hermes.** Set `HERMES_MODE=live` and `HERMES_ENDPOINT`. Run
   `python -m multiagency.main generate` and read the queue before trusting the
   scheduler with it.
+- **Images.** Set `IMAGE_RENDERER=openai` and `OPENAI_API_KEY`. Generate once
+  and look at the queue before letting the scheduler near it.
 - **X.** Set `PUBLISHER=x` and the four `X_*` credentials in `.env`. They are
   read in `settings.py` and used only in `publisher.py`; they are never stored
   in the database, never logged, and never rendered in the UI. `.env` is
@@ -243,7 +283,9 @@ must produce the same signature.
 
 `pyyaml`, `apscheduler`, `fastapi`, `uvicorn`, `python-multipart` (FastAPI
 needs it to read HTML form posts), `requests` and `requests-oauthlib`.
-`pytest` and `httpx` for tests.
+`pytest` and `httpx` for tests. The image renderer and the X media upload use
+`requests`; no imaging library is needed, since the placeholder PNG is built
+from `zlib` and the real one arrives as bytes.
 
 All HTTP goes through `requests`: the Hermes adapter, the X publisher and the
 RSS reader. The .env reader, the feed parsing and the HTML rendering are

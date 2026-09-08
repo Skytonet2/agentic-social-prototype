@@ -30,6 +30,7 @@ from multiagency.clock import iso, local_str, parse  # noqa: E402
 from multiagency.config import load_config  # noqa: E402
 from multiagency.errors import PublishError  # noqa: E402
 from multiagency.hermes import MockHermes  # noqa: E402
+from multiagency.images import MockImageRenderer  # noqa: E402
 from multiagency.publisher import MockPublisher  # noqa: E402
 
 UTC = timezone.utc
@@ -40,11 +41,11 @@ class FlakyPublisher(MockPublisher):
 
     fail_on_call: int = 2
 
-    def publish(self, text: str) -> str:
+    def publish(self, text: str, *, image_path=None, image_alt=None) -> str:
         if self.counter + 1 == self.fail_on_call:
             self.counter += 1
             raise PublishError("X returned HTTP 429: rate limit exceeded")
-        return super().publish(text)
+        return super().publish(text, image_path=image_path, image_alt=image_alt)
 
 
 class StandInReviewer:
@@ -127,6 +128,7 @@ def main() -> int:
     db.sync_config(conn, cfg)
 
     hermes = MockHermes()
+    renderer = MockImageRenderer()
     publisher = FlakyPublisher(path=Path(args.db).with_suffix(".published.log"))
     reviewer = StandInReviewer()
 
@@ -143,12 +145,17 @@ def main() -> int:
         if now.hour == 6:
             pipeline.run_pull(conn, cfg)
         if now.hour % 6 == 0:
-            for outcome in pipeline.run_generation(conn, cfg, hermes, now=now):
+            for outcome in pipeline.run_generation(
+                conn, cfg, hermes, now=now, renderer=renderer
+            ):
                 if outcome.post_id:
                     generated += 1
                     print(
-                        "  {}  generated post {} for {}".format(
-                            local_str(now, cfg.timezone), outcome.post_id, outcome.slot_id
+                        "  {}  generated post {} for {}{}".format(
+                            local_str(now, cfg.timezone),
+                            outcome.post_id,
+                            outcome.slot_id,
+                            " with an image" if outcome.image_path else "",
                         )
                     )
 
@@ -210,6 +217,20 @@ def main() -> int:
         )
         if not row["unused"]:
             exhausted.append(row["lane_id"])
+
+    with_images = conn.execute(
+        "SELECT COUNT(*) FROM posts WHERE image_path IS NOT NULL"
+    ).fetchone()[0]
+    failed_images = conn.execute(
+        "SELECT COUNT(*) FROM posts WHERE image_error IS NOT NULL"
+    ).fetchone()[0]
+    print("\nImages")
+    print(
+        "  {} post(s) carried an image, {} render(s) failed".format(
+            with_images, failed_images
+        )
+    )
+    print("  only lanes with allow_images can get one")
 
     print("\nEmpty slots")
     if skipped_slots:

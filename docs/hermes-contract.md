@@ -23,7 +23,8 @@ required on the Hermes side.
    constraints                lane_id
    material                   material_id
    recent_posts               reasoning
-   retry_note
+   images                     image_prompt   (optional)
+   retry_note                 image_alt      (with image_prompt)
 ```
 
 Default transport is `POST` with a JSON body and a JSON response.
@@ -90,6 +91,18 @@ This is the repetition guard, and it is the single most important field for a
 system that runs unattended for a week. Without it, output converges on the
 same three observations by about day four. Empty on a fresh install.
 
+### `images` — whether this lane takes a picture
+
+| field | type | meaning |
+| --- | --- | --- |
+| `allowed` | bool | Whether this lane accepts images at all. |
+| `alt_text_max` | int | Character cap on alt text. X allows 1000. |
+
+`allowed` comes from two switches in the content YAML: a global `images.enabled`
+and a per-lane `allow_images`. Both must be true. When it is `false`, do not
+return an `image_prompt`; one that arrives anyway is dropped and recorded
+rather than quietly honoured.
+
 ### `retry_note` — usually `null`
 
 Set only on the one regeneration the prototype allows, and only when the
@@ -121,6 +134,8 @@ the same material. There is never more than one retry.
 | `lane_id` | string | missing, or not the `lane.id` that was sent |
 | `material_id` | int | missing, non-numeric, or not the `material.id` that was sent |
 | `reasoning` | string | missing, not a string, empty or whitespace only |
+| `image_prompt` | string or absent | present but not a string |
+| `image_alt` | string | `image_prompt` present and this missing, empty, or over the cap |
 
 A response failing any of these raises an error. The prototype queues nothing,
 leaves the material unused so it can be tried again, and records the failure.
@@ -136,6 +151,38 @@ It is most of what makes review fast enough to be sustainable.
 One or two sentences. Say why this material was worth posting, in this lane,
 now. "It is interesting" is not reasoning. Referring to what the recent posts
 did or did not cover is exactly what it is for.
+
+## Images
+
+Optional, and only where `images.allowed` is true. Hermes decides whether a
+post is better with a picture; most are not. When it decides yes, it returns
+both fields together:
+
+```json
+{
+  "text": "The approval queue now shows the reasoning behind each draft.",
+  "lane_id": "shipped",
+  "material_id": 41,
+  "reasoning": "It is a concrete shipped change with a measurable effect, and nothing in the last ten posts covers the review interface.",
+  "image_prompt": "A restrained editorial illustration of a review queue with a single gate. Flat shapes, muted palette, no text, no logos.",
+  "image_alt": "An illustration of a queue of cards passing through one gate"
+}
+```
+
+The image model downstream only executes `image_prompt`. It does not interpret
+it, embellish it, or decide anything. If the picture is wrong, the prompt was
+wrong, and the prompt is Hermes's.
+
+**`image_alt` is required whenever `image_prompt` is present.** An image
+published without alt text is inaccessible, so the pair is refused rather than
+posted incomplete. Write the alt text for someone who cannot see the image, not
+as a restatement of the prompt.
+
+Two things are worth knowing about what happens next. A failed render never
+costs the post: the text is already queued and the reason is stored beside it,
+so the post goes to review as text. And the reviewer sees the image at a size
+worth judging and can drop it, publishing the words alone. An image is a
+suggestion; the post is the deliverable.
 
 ## Errors
 
@@ -228,6 +275,10 @@ Taken from the shipped config, with two posts already published.
       "posted_at": "2026-09-08T18:23:58Z"
     }
   ],
+  "images": {
+    "allowed": false,
+    "alt_text_max": 1000
+  },
   "retry_note": null
 }
 ```
@@ -235,6 +286,6 @@ Taken from the shipped config, with two posts already published.
 ## Non-goals
 
 Hermes is not asked to select material, schedule anything, publish anything,
-reply to anyone, or hold state between calls. It receives one candidate and
+render its own images, reply to anyone, or hold state between calls. It receives one candidate and
 answers with one post and its reasoning. Keeping it that narrow is what makes
 the rest of the system debuggable.
