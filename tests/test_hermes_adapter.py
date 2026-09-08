@@ -65,11 +65,21 @@ def test_the_whole_contract_goes_over_the_wire(request_):
     response = hermes.generate(request_)
 
     body = captured["json"]
-    assert set(body) == {"lane", "constraints", "material", "recent_posts", "retry_note"}
+    assert set(body) == {
+        "lane",
+        "constraints",
+        "material",
+        "recent_posts",
+        "images",
+        "retry_note",
+    }
     assert body["lane"]["purpose"] and body["lane"]["example"]
     assert body["constraints"]["max_length"] == 200
     assert "Do not use em-dashes." in body["constraints"]["rules"]
     assert body["material"]["id"] == 3
+    # This lane does not take images, and Hermes is told so rather than left
+    # to guess and have the prompt dropped downstream.
+    assert body["images"] == {"allowed": False, "alt_text_max": 1000}
     assert captured["url"] == "https://hermes.example/generate"
     assert captured["timeout"] == 60
     assert hermes.session.headers["Authorization"] == "Bearer k"
@@ -174,6 +184,8 @@ def _settings(**overrides) -> Settings:
         hermes_endpoint="",
         hermes_api_key="",
         publisher="mock",
+        image_renderer="mock",
+        openai_api_key="",
         ui_username="",
         ui_password="",
     )

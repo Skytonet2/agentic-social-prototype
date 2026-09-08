@@ -11,6 +11,19 @@ pull_interval_minutes: 360
 # How far ahead of a slot a post is generated, so there is time to review it.
 generate_lead_hours: 36
 
+# Images. The master switch; a lane still has to opt in with allow_images,
+# so turning this on does not put a picture on every post.
+#
+# Hermes decides whether a post warrants an image and writes the prompt and the
+# alt text. The image model only executes that prompt. Nothing here decides
+# what to draw.
+images:
+  enabled: true
+  model: gpt-image-1
+  size: "1024x1024"      # 1024x1024 | 1536x1024 | 1024x1536 | auto
+  quality: medium        # low | medium | high | auto
+  alt_text_max: 1000     # X's own cap
+
 # Injected into every Hermes call, on top of the per-lane constraints.
 global_constraints:
   max_length: 280
@@ -66,6 +79,9 @@ lanes:
         - "Past tense. It shipped or it is not a post."
         - "No roadmap talk. No 'coming soon'."
     active: true
+    # The only lane with images on. Build updates carry a visual well; the
+    # other two are text, and stay text.
+    allow_images: true
     sources:
       - id: shipped_changelog
         source_type: file_lines

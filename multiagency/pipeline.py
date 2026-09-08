@@ -12,13 +12,15 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from . import db
 from .clock import iso, local_str, now_utc, occurrences_within, parse
 from .config import ContentConfig, SlotConfig
-from .errors import HermesError, PublishError
+from .errors import HermesError, ImageError, PublishError
 from .hermes import Hermes, MaterialBrief, PublishedPost, build_request
 from .hermes.contract import RECENT_POST_WINDOW
+from .images import ImageRenderer
 from .publisher import Publisher
 from .sources import pull_all
 from .validation import retry_note, validate
@@ -42,6 +44,8 @@ class GenerationOutcome:
     flagged: bool = False
     skipped: str | None = None
     error: str | None = None
+    image_path: str | None = None
+    image_error: str | None = None
 
     def __str__(self) -> str:
         when = iso(self.scheduled_for)
@@ -50,6 +54,10 @@ class GenerationOutcome:
         if self.skipped:
             return "{} @ {}: skipped ({})".format(self.slot_id, when, self.skipped)
         state = "flagged, queued for review" if self.flagged else "queued"
+        if self.image_error:
+            state += ", image failed"
+        elif self.image_path:
+            state += " with an image"
         return "{} @ {}: post {} {}".format(self.slot_id, when, self.post_id, state)
 
 
@@ -97,6 +105,7 @@ def generate_for_slot(
     hermes: Hermes,
     slot: SlotConfig,
     scheduled_for: datetime,
+    renderer: ImageRenderer | None = None,
 ) -> GenerationOutcome:
     """Fill one slot occurrence with a pending post.
 
@@ -172,6 +181,8 @@ def generate_for_slot(
             flag_reason,
         )
 
+    images_allowed = cfg.images_allowed_for(slot.lane_id)
+
     with db.transaction(conn):
         post_id = db.insert_post(
             conn,
@@ -183,6 +194,8 @@ def generate_for_slot(
             scheduled_for=scheduled_for,
             flagged=flagged,
             flag_reason=flag_reason,
+            image_prompt=response.image_prompt,
+            image_alt=response.image_alt,
         )
         db.mark_material_used(conn, material.id)
         if flagged:
@@ -196,8 +209,53 @@ def generate_for_slot(
 
     outcome.post_id = post_id
     outcome.flagged = flagged
+
+    if response.wants_image:
+        _render_image(conn, response, post_id, slot.lane_id, images_allowed, renderer, outcome)
+
     log.info("%s", outcome)
     return outcome
+
+
+def _render_image(
+    conn: sqlite3.Connection,
+    response,
+    post_id: int,
+    lane_id: str,
+    images_allowed: bool,
+    renderer: ImageRenderer | None,
+    outcome: GenerationOutcome,
+) -> None:
+    """Render what Hermes asked for. The post already exists and is never lost.
+
+    Whether a lane takes images at all is policy and lives here, not in the
+    contract: Hermes is told, and if it asks anyway the request is dropped and
+    recorded rather than quietly honoured.
+    """
+    if not images_allowed:
+        detail = "lane {} does not allow images, so the prompt was dropped".format(lane_id)
+        log.warning("post %s: %s", post_id, detail)
+        db.log_event(conn, "image_not_allowed", detail, lane_id=lane_id, post_id=post_id)
+        return
+
+    if renderer is None:
+        db.set_image(conn, post_id, error="no image renderer is configured")
+        outcome.image_error = "no image renderer is configured"
+        return
+
+    try:
+        image = renderer.render(response.image_prompt, post_id=post_id)
+    except ImageError as exc:
+        # The post keeps its text. A missing picture is not worth losing a post.
+        db.set_image(conn, post_id, error=str(exc))
+        db.log_event(conn, "image_failed", str(exc), lane_id=lane_id, post_id=post_id)
+        outcome.image_error = str(exc)
+        log.warning("post %s: image failed, keeping the post: %s", post_id, exc)
+        return
+
+    db.set_image(conn, post_id, path=str(image.path))
+    outcome.image_path = str(image.path)
+    db.log_event(conn, "image_rendered", image.path.name, lane_id=lane_id, post_id=post_id)
 
 
 def run_generation(
@@ -205,6 +263,7 @@ def run_generation(
     cfg: ContentConfig,
     hermes: Hermes,
     now: datetime | None = None,
+    renderer: ImageRenderer | None = None,
 ) -> list[GenerationOutcome]:
     """Queue a pending post for every upcoming slot inside the lead window."""
     now = now or now_utc()
@@ -214,7 +273,7 @@ def run_generation(
         for when in occurrences_within(
             slot.weekday, hour, minute, cfg.timezone, now, cfg.generate_lead_hours
         ):
-            outcomes.append(generate_for_slot(conn, cfg, hermes, slot, when))
+            outcomes.append(generate_for_slot(conn, cfg, hermes, slot, when, renderer))
     return outcomes
 
 
@@ -279,8 +338,32 @@ def _publish_one(
             "limit".format(len(text), PLATFORM_HARD_LIMIT),
         )
 
+    # The image a human approved goes out with the post. A row whose file has
+    # gone missing publishes as text rather than failing: the approval was for
+    # the words, and losing the picture is not worth losing the slot.
+    image_path = None
+    if row["image_path"]:
+        candidate = Path(row["image_path"])
+        if candidate.exists():
+            image_path = candidate
+        else:
+            log.warning(
+                "post %s: image file %s is gone, publishing text only",
+                post_id,
+                candidate,
+            )
+            db.log_event(
+                conn,
+                "image_missing_at_publish",
+                str(candidate),
+                lane_id=row["lane_id"],
+                post_id=post_id,
+            )
+
     try:
-        x_post_id = publisher.publish(text)
+        x_post_id = publisher.publish(
+            text, image_path=image_path, image_alt=row["image_alt"]
+        )
     except PublishError as exc:
         # No silent retry. A human decides whether this goes out again.
         return _fail(conn, post_id, row["lane_id"], str(exc))

@@ -11,3 +11,7 @@ class HermesError(Exception):
 
 class PublishError(Exception):
     """The post was not accepted by the platform."""
+
+
+class ImageError(Exception):
+    """The image could not be rendered. Never fatal to the post it belonged to."""

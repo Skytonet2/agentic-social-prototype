@@ -37,6 +37,8 @@ class Settings:
     hermes_endpoint: str
     hermes_api_key: str
     publisher: str
+    image_renderer: str
+    openai_api_key: str
     ui_username: str
     ui_password: str
 
@@ -64,6 +66,8 @@ def load_settings() -> Settings:
         hermes_endpoint=os.environ.get("HERMES_ENDPOINT", "").strip(),
         hermes_api_key=os.environ.get("HERMES_API_KEY", "").strip(),
         publisher=os.environ.get("PUBLISHER", "mock").strip().lower(),
+        image_renderer=os.environ.get("IMAGE_RENDERER", "mock").strip().lower(),
+        openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip(),
         ui_username=os.environ.get("UI_USERNAME", "").strip(),
         ui_password=os.environ.get("UI_PASSWORD", ""),
     )

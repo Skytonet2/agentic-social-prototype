@@ -15,12 +15,14 @@ from multiagency.publisher import MockPublisher
 class RecordingPublisher:
     def __init__(self, fail_with: Exception | None = None) -> None:
         self.published: list[str] = []
+        self.images: list[tuple[object, object]] = []
         self.fail_with = fail_with
 
-    def publish(self, text: str) -> str:
+    def publish(self, text: str, *, image_path=None, image_alt=None) -> str:
         if self.fail_with:
             raise self.fail_with
         self.published.append(text)
+        self.images.append((image_path, image_alt))
         return "x-{}".format(len(self.published))
 
 

@@ -22,6 +22,8 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         hermes_endpoint="",
         hermes_api_key="",
         publisher="mock",
+        image_renderer="mock",
+        openai_api_key="",
         ui_username="",
         ui_password="",
     )

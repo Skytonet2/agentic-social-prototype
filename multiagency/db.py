@@ -8,6 +8,9 @@ called out here so they are not mistaken for drift:
   ``pending`` and flagged, never dropped, so the reviewer sees why.
 * ``posts.slot_id`` ties a post to the schedule row that asked for it, which is
   what stops the generator filling the same slot twice.
+* the ``posts.image_*`` columns hold what Hermes asked for and what came back.
+  A post keeps its text when the image fails, so the failure is recorded beside
+  it rather than costing the post.
 
 The ``events`` table is an append-only operational log. Skipped slots and
 publish failures land there so a week can be audited after the fact.
@@ -81,7 +84,11 @@ CREATE TABLE IF NOT EXISTS posts (
     x_post_id      TEXT,
     failure_reason TEXT,
     flagged        INTEGER NOT NULL DEFAULT 0,
-    flag_reason    TEXT
+    flag_reason    TEXT,
+    image_prompt   TEXT,
+    image_alt      TEXT,
+    image_path     TEXT,
+    image_error    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS schedule (
@@ -112,13 +119,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_slot_occurrence
 """
 
 
+# Columns added after the first databases were created. CREATE TABLE IF NOT
+# EXISTS will not add them to an existing file, so they are applied by hand.
+ADDED_COLUMNS = {
+    "posts": [
+        ("image_prompt", "TEXT"),
+        ("image_alt", "TEXT"),
+        ("image_path", "TEXT"),
+        ("image_error", "TEXT"),
+    ],
+}
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    migrate(conn)
     return conn
+
+
+def migrate(conn: sqlite3.Connection) -> list[str]:
+    """Add any column a newer version expects. Returns what it added."""
+    applied: list[str] = []
+    for table, columns in ADDED_COLUMNS.items():
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info({})".format(table))}
+        for name, kind in columns:
+            if name not in existing:
+                conn.execute("ALTER TABLE {} ADD COLUMN {} {}".format(table, name, kind))
+                applied.append("{}.{}".format(table, name))
+    return applied
 
 
 def log_event(
@@ -286,12 +318,15 @@ def insert_post(
     scheduled_for: datetime | None,
     flagged: bool = False,
     flag_reason: str | None = None,
+    image_prompt: str | None = None,
+    image_alt: str | None = None,
 ) -> int:
     cur = conn.execute(
         """
         INSERT INTO posts (lane_id, material_id, slot_id, generated_text, reasoning,
-                           status, created_at, scheduled_for, flagged, flag_reason)
-        VALUES (?,?,?,?,?,'pending',?,?,?,?)
+                           status, created_at, scheduled_for, flagged, flag_reason,
+                           image_prompt, image_alt)
+        VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?)
         """,
         (
             lane_id,
@@ -303,9 +338,33 @@ def insert_post(
             iso(scheduled_for),
             int(flagged),
             flag_reason,
+            image_prompt,
+            image_alt,
         ),
     )
     return int(cur.lastrowid)
+
+
+def set_image(
+    conn: sqlite3.Connection,
+    post_id: int,
+    *,
+    path: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Record the outcome of rendering. Either a file, or why there is not one."""
+    conn.execute(
+        "UPDATE posts SET image_path = ?, image_error = ? WHERE id = ?",
+        (path, error, post_id),
+    )
+
+
+def drop_image(conn: sqlite3.Connection, post_id: int) -> None:
+    """A reviewer decided the post goes out as text. The file is left on disk."""
+    conn.execute(
+        "UPDATE posts SET image_path = NULL, image_error = NULL WHERE id = ?",
+        (post_id,),
+    )
 
 
 def get_post(conn: sqlite3.Connection, post_id: int) -> sqlite3.Row | None:

@@ -16,6 +16,12 @@ What Hermes returns
     lane_id         which lane it is for
     material_id     which material it drew from
     reasoning       one or two sentences on why this was worth posting
+    image_prompt    optional, and only where the lane allows images
+    image_alt       required whenever image_prompt is present
+
+Hermes decides whether a post warrants an image and writes the prompt for it.
+The image model downstream only executes that prompt; it makes no decisions.
+That keeps every judgment in one place, which is the whole point of the shape.
 """
 
 from __future__ import annotations
@@ -83,6 +89,10 @@ class HermesRequest:
     constraints: Constraints
     material: MaterialBrief
     recent_posts: tuple[PublishedPost, ...] = ()
+    # Whether this lane takes images at all. When false, Hermes should not
+    # return an image_prompt, and one that arrives anyway is dropped.
+    images_allowed: bool = False
+    alt_text_max: int = 1000
     # Set only on the single retry allowed by step 3 of the flow. It states
     # which mechanical constraint the previous attempt broke. It is not a
     # rewrite instruction and it is not chaining: Hermes generates afresh.
@@ -99,6 +109,10 @@ class HermesRequest:
             },
             "material": self.material.to_payload(),
             "recent_posts": [p.to_payload() for p in self.recent_posts],
+            "images": {
+                "allowed": self.images_allowed,
+                "alt_text_max": self.alt_text_max,
+            },
             "retry_note": self.retry_note,
         }
 
@@ -109,6 +123,12 @@ class HermesResponse:
     lane_id: str
     material_id: int
     reasoning: str
+    image_prompt: str | None = None
+    image_alt: str | None = None
+
+    @property
+    def wants_image(self) -> bool:
+        return bool(self.image_prompt)
 
     @classmethod
     def from_payload(cls, payload: Any, request: HermesRequest) -> "HermesResponse":
@@ -154,12 +174,46 @@ class HermesResponse:
                 )
             )
 
+        image_prompt, image_alt = cls._parse_image(payload, request)
+
         return cls(
             text=text.strip(),
             lane_id=payload["lane_id"],
             material_id=material_id,
             reasoning=" ".join(reasoning.split()),
+            image_prompt=image_prompt,
+            image_alt=image_alt,
         )
+
+    @staticmethod
+    def _parse_image(payload: dict, request: "HermesRequest") -> tuple[str | None, str | None]:
+        """Both image fields are optional, but they travel together.
+
+        An image without alt text is malformed rather than merely untidy: it
+        would go out inaccessible, so it is refused the same way an empty
+        reasoning is.
+        """
+        prompt = payload.get("image_prompt")
+        alt = payload.get("image_alt")
+
+        if prompt is None or (isinstance(prompt, str) and not prompt.strip()):
+            return None, None
+        if not isinstance(prompt, str):
+            raise HermesError(
+                "Hermes returned an image_prompt that is not a string"
+            )
+        if not isinstance(alt, str) or not alt.strip():
+            raise HermesError(
+                "Hermes returned an image_prompt with no image_alt. An image "
+                "without alt text would publish inaccessible, so the pair is "
+                "required together."
+            )
+        if len(alt.strip()) > request.alt_text_max:
+            raise HermesError(
+                "Hermes returned image_alt of {} characters, over the {} "
+                "character limit".format(len(alt.strip()), request.alt_text_max)
+            )
+        return prompt.strip(), " ".join(alt.split())
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -167,6 +221,8 @@ class HermesResponse:
             "lane_id": self.lane_id,
             "material_id": self.material_id,
             "reasoning": self.reasoning,
+            "image_prompt": self.image_prompt,
+            "image_alt": self.image_alt,
         }
 
 
@@ -183,5 +239,7 @@ def build_request(
         constraints=cfg.constraints_for(lane_id),
         material=material,
         recent_posts=tuple(recent_posts)[:RECENT_POST_WINDOW],
+        images_allowed=cfg.images_allowed_for(lane_id),
+        alt_text_max=cfg.images.alt_text_max,
         retry_note=retry_note,
     )

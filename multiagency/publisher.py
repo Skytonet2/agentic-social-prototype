@@ -29,12 +29,21 @@ from .settings import REPO_ROOT
 log = logging.getLogger(__name__)
 
 X_TWEETS_ENDPOINT = "https://api.x.com/2/tweets"
+X_MEDIA_UPLOAD_ENDPOINT = "https://api.x.com/2/media/upload"
+X_MEDIA_METADATA_ENDPOINT = "https://api.x.com/2/media/metadata"
 POST_URL_TEMPLATE = "https://x.com/i/web/status/{}"
 REQUEST_TIMEOUT_SECONDS = 30
+MEDIA_TIMEOUT_SECONDS = 90
 
 
 class Publisher(Protocol):
-    def publish(self, text: str) -> str:
+    def publish(
+        self,
+        text: str,
+        *,
+        image_path: Path | None = None,
+        image_alt: str | None = None,
+    ) -> str:
         """Return the platform post id. Raise PublishError on refusal."""
 
 
@@ -49,15 +58,29 @@ class MockPublisher:
     path: Path = REPO_ROOT / "data" / "published_mock.log"
     counter: int = 0
 
-    def publish(self, text: str) -> str:
+    def publish(
+        self,
+        text: str,
+        *,
+        image_path: Path | None = None,
+        image_alt: str | None = None,
+    ) -> str:
         self.counter += 1
         post_id = "mock-{}-{}".format(int(time.time()), self.counter)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        record: dict = {"id": post_id, "at": iso(now_utc()), "text": text}
+        if image_path is not None:
+            record["image"] = str(image_path)
+            record["image_alt"] = image_alt
+            record["image_bytes"] = Path(image_path).stat().st_size
         with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps({"id": post_id, "at": iso(now_utc()), "text": text}) + "\n"
-            )
-        log.info("mock publish %s (%d chars)", post_id, len(text))
+            fh.write(json.dumps(record) + "\n")
+        log.info(
+            "mock publish %s (%d chars%s)",
+            post_id,
+            len(text),
+            ", with an image" if image_path is not None else "",
+        )
         return post_id
 
 
@@ -71,6 +94,8 @@ class XPublisher:
         access_token: str,
         access_token_secret: str,
         endpoint: str = X_TWEETS_ENDPOINT,
+        media_endpoint: str = X_MEDIA_UPLOAD_ENDPOINT,
+        media_metadata_endpoint: str = X_MEDIA_METADATA_ENDPOINT,
     ) -> None:
         missing = [
             name
@@ -98,13 +123,87 @@ class XPublisher:
             signature_type=SIGNATURE_TYPE_AUTH_HEADER,
         )
         self.endpoint = endpoint
+        self.media_endpoint = media_endpoint
+        self.media_metadata_endpoint = media_metadata_endpoint
         self.session = requests.Session()
 
-    def publish(self, text: str) -> str:
+    def publish(
+        self,
+        text: str,
+        *,
+        image_path: Path | None = None,
+        image_alt: str | None = None,
+    ) -> str:
+        body: dict = {"text": text}
+        if image_path is not None:
+            body["media"] = {"media_ids": [self.upload_media(Path(image_path), image_alt)]}
+        return self._create_post(body)
+
+    def upload_media(self, path: Path, alt_text: str | None) -> str:
+        """Upload one image and return its media id.
+
+        Simple upload, which X documents for images. Alt text is set in a
+        second call, and a failure there fails the post: an image published
+        without alt text is inaccessible, which is not a silent trade to make.
+        """
+        if not path.exists():
+            raise PublishError("the image file is missing: {}".format(path))
+
+        with path.open("rb") as fh:
+            try:
+                response = self.session.post(
+                    self.media_endpoint,
+                    files={"media": (path.name, fh, "image/png")},
+                    data={"media_category": "tweet_image"},
+                    auth=self.auth,
+                    timeout=MEDIA_TIMEOUT_SECONDS,
+                )
+            except requests.RequestException as exc:
+                raise PublishError("could not upload the image to X: {}".format(exc)) from exc
+
+        if response.status_code >= 400:
+            raise PublishError(
+                "X refused the image upload, HTTP {}: {}".format(
+                    response.status_code, response.text[:500]
+                )
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise PublishError("X returned a media response that is not JSON") from exc
+
+        media_id = (payload.get("data") or {}).get("id")
+        if not media_id:
+            raise PublishError(
+                "X accepted the image but returned no media id: {}".format(payload)
+            )
+
+        if alt_text:
+            self._set_alt_text(str(media_id), alt_text)
+        return str(media_id)
+
+    def _set_alt_text(self, media_id: str, alt_text: str) -> None:
+        try:
+            response = self.session.post(
+                self.media_metadata_endpoint,
+                json={"id": media_id, "metadata": {"alt_text": {"text": alt_text}}},
+                auth=self.auth,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            raise PublishError("could not set the image alt text: {}".format(exc)) from exc
+        if response.status_code >= 400:
+            raise PublishError(
+                "X refused the alt text, HTTP {}: {}".format(
+                    response.status_code, response.text[:500]
+                )
+            )
+
+    def _create_post(self, body: dict) -> str:
         try:
             response = self.session.post(
                 self.endpoint,
-                json={"text": text},
+                json=body,
                 auth=self.auth,
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )

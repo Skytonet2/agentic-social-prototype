@@ -27,6 +27,27 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 PLATFORM_MAX_LENGTH = 280
 
 
+# X's own cap on alt text.
+ALT_TEXT_MAX = 1000
+IMAGE_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+IMAGE_QUALITIES = {"low", "medium", "high", "auto"}
+
+
+@dataclass(frozen=True)
+class ImageSettings:
+    """How images get made, when a lane asks for one.
+
+    ``enabled`` is the master switch. A lane still has to opt in with
+    ``allow_images``, so turning this on does not put pictures on everything.
+    """
+
+    enabled: bool
+    model: str
+    size: str
+    quality: str
+    alt_text_max: int = ALT_TEXT_MAX
+
+
 @dataclass(frozen=True)
 class Constraints:
     """The constraint block handed to Hermes and checked by the validator.
@@ -74,6 +95,7 @@ class LaneConfig:
     example: str
     constraints: Constraints | None
     active: bool
+    allow_images: bool = False
     sources: tuple[SourceConfig, ...] = ()
 
 
@@ -104,7 +126,12 @@ class ContentConfig:
     global_constraints: Constraints
     lanes: tuple[LaneConfig, ...]
     schedule: tuple[SlotConfig, ...]
+    images: ImageSettings
     path: Path | None = None
+
+    def images_allowed_for(self, lane_id: str) -> bool:
+        """A lane gets an image only if the system and the lane both say so."""
+        return self.images.enabled and self.lane(lane_id).allow_images
 
     def lane(self, lane_id: str) -> LaneConfig:
         for lane in self.lanes:
@@ -263,6 +290,7 @@ def _parse_lane(
     purpose = _require(errs, where, data, "purpose", str)
     example = _require(errs, where, data, "example", str)
     active = _require(errs, where, data, "active", bool, default=True)
+    allow_images = _require(errs, where, data, "allow_images", bool, default=False)
     constraints = _parse_constraints(
         errs, where + ".constraints", data.get("constraints"), defaults=globals_
     )
@@ -306,7 +334,42 @@ def _parse_lane(
         example=" ".join(example.split()),
         constraints=constraints,
         active=active,
+        allow_images=bool(allow_images),
         sources=tuple(sources),
+    )
+
+
+def _parse_images(errs: _Errors, data: Any) -> ImageSettings:
+    """The images block is optional. Absent means no images anywhere."""
+    if data is None:
+        return ImageSettings(enabled=False, model="gpt-image-1", size="1024x1024",
+                             quality="medium")
+    if not isinstance(data, dict):
+        errs.add("images", "must be a mapping, got {}".format(type(data).__name__))
+        return ImageSettings(False, "gpt-image-1", "1024x1024", "medium")
+
+    enabled = _require(errs, "images", data, "enabled", bool, default=False)
+    model = _require(errs, "images", data, "model", str, default="gpt-image-1")
+    size = _require(errs, "images", data, "size", str, default="1024x1024")
+    quality = _require(errs, "images", data, "quality", str, default="medium")
+    alt_max = _require(errs, "images", data, "alt_text_max", int, default=ALT_TEXT_MAX)
+
+    if size and size not in IMAGE_SIZES:
+        errs.add("images.size", "is {!r}, must be one of {}".format(size, sorted(IMAGE_SIZES)))
+    if quality and quality not in IMAGE_QUALITIES:
+        errs.add(
+            "images.quality",
+            "is {!r}, must be one of {}".format(quality, sorted(IMAGE_QUALITIES)),
+        )
+    if isinstance(alt_max, int) and not (1 <= alt_max <= ALT_TEXT_MAX):
+        errs.add("images.alt_text_max", "must be between 1 and {}".format(ALT_TEXT_MAX))
+
+    return ImageSettings(
+        enabled=bool(enabled),
+        model=model or "gpt-image-1",
+        size=size or "1024x1024",
+        quality=quality or "medium",
+        alt_text_max=alt_max if isinstance(alt_max, int) else ALT_TEXT_MAX,
     )
 
 
@@ -383,6 +446,7 @@ def load_config(path: str | Path) -> ContentConfig:
     globals_ = _parse_constraints(
         errs, "global_constraints", raw.get("global_constraints"), defaults=None
     )
+    images = _parse_images(errs, raw.get("images"))
 
     lanes_raw = raw.get("lanes")
     lanes: list[LaneConfig] = []
@@ -420,6 +484,17 @@ def load_config(path: str | Path) -> ContentConfig:
                 "non-UTC zones need the tzdata package installed.".format(timezone, exc),
             )
 
+    # A lane asking for images when the system has them switched off is a
+    # contradiction worth naming, not a silent no-op.
+    if not images.enabled:
+        for lane in lanes:
+            if lane.allow_images:
+                errs.add(
+                    "lanes ({})".format(lane.id),
+                    "sets allow_images but images.enabled is false, so it would "
+                    "never get one. Turn images on, or drop allow_images.",
+                )
+
     errs.raise_if_any(path)
 
     return ContentConfig(
@@ -429,5 +504,6 @@ def load_config(path: str | Path) -> ContentConfig:
         global_constraints=globals_,
         lanes=tuple(lanes),
         schedule=tuple(schedule),
+        images=images,
         path=path,
     )
